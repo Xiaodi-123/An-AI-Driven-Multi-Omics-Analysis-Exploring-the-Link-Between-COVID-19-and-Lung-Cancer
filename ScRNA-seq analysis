@@ -1,0 +1,179 @@
+install.packages('Seurat')
+library(Seurat)
+library(tidyverse)
+
+setwd('/Users/smrsp/lung cancer/DATA')
+
+LA1 <- Read10X(data.dir = './LA1/')
+LA2 <- Read10X(data.dir = './LA2/')
+LA3 <- Read10X(data.dir = './LA3/')
+LC1 <- Read10X(data.dir = './NSCLC1/')
+LC2 <- Read10X(data.dir = './NSCLC2/')
+P1NA <- Read10X(data.dir = './P1_N1/')
+P1NM <- Read10X(data.dir = './P1_NM/')
+P1T1 <- Read10X(data.dir = './P1_T1/')
+P1TM <- Read10X(data.dir = './P1_TM/')
+P2N1 <- Read10X(data.dir = './P2_N1/')
+P2NM <- Read10X(data.dir = './P2_NM/')
+P2T1 <- Read10X(data.dir = './P2_T1/')
+P2TM <- Read10X(data.dir = './P2_TM/')
+P3N1 <- Read10X(data.dir = './P3_N1/')
+P3NM <- Read10X(data.dir = './P3_NM/')
+P3TI1 <- Read10X(data.dir = './P3_TI1/')
+P3TI2 <- Read10X(data.dir = './P3_TI2/')
+P3TM1 <- Read10X(data.dir = './P3_TM1/')
+P3TM2 <- Read10X(data.dir = './P3_TM2/')
+
+LA1 <- CreateSeuratObject(LA1,project = 'LA1')
+LA2 <- CreateSeuratObject(LA2,project = 'LA2')
+LA3 <- CreateSeuratObject(LA3,project = 'LA3')
+LC1 <- CreateSeuratObject(LC1,project = 'LC1')
+LC2 <- CreateSeuratObject(LC2,project = 'LC2')
+P1NA <- CreateSeuratObject(P1NA,project = 'P1NA')
+P1NM <- CreateSeuratObject(P1NM,project = 'P1NM')
+P1T1 <- CreateSeuratObject(P1T1,project = 'P1T1')
+P1TM <- CreateSeuratObject(P1TM,project = 'P1TM')
+P2N1 <- CreateSeuratObject(P2N1,project = 'P2N1')
+P2NM <- CreateSeuratObject(P2NM,project = 'P2NM')
+P2T1 <- CreateSeuratObject(P2T1,project = 'P2T1')
+P2TM <- CreateSeuratObject(P2TM,project = 'P2TM')
+P3N1 <- CreateSeuratObject(P3N1,project = 'P3N1')
+P3NM <- CreateSeuratObject(P3NM,project = 'P3NM')
+P3TI1 <- CreateSeuratObject(P3TI1,project = 'P3TI1')
+P3TI2 <- CreateSeuratObject(P3TI2,project = 'P3TI2')
+P3TM1 <- CreateSeuratObject(P3TM1,project = 'P3TM1')
+P3TM2 <- CreateSeuratObject(P3TM2,project = 'P3TM2')
+
+scRNA <- merge(LA1,y=c(LA2,LA3,LC1,LC2,P1NA,P1NM,P1T1,P1TM,P2N1,P2NM,P2T1,P2TM,P3N1,P3NM,P3TI1,P3TM1,P3TM2))
+scRNA@meta.data$tissue_type=scRNA@meta.data$orig.ident
+#install.packages('stringr')
+scRNA@meta.data$tissue_type=stringr::str_remove(scRNA@meta.data$tissue_type,'[0-9]')
+scRNA[["percent.mt"]] <- PercentageFeatureSet(scRNA, pattern = "^MT-")
+HB.genes <- c("HBA1","HBA2","HBB","HBD","HBE1","HBG1","HBG2","HBM","HBQ1","HBZ")
+HB_m <- match(HB.genes, rownames(scRNA@assays$RNA)) 
+HB.genes <- rownames(scRNA@assays$RNA)[HB_m] 
+HB.genes <- HB.genes[!is.na(HB.genes)] 
+scRNA[["percent.HB"]]<-PercentageFeatureSet(scRNA, features=HB.genes) 
+#head(scRNA@meta.data)
+library(ggplot2)
+col.num <- length(levels(scRNA@active.ident))
+
+VlnPlot(scRNA,features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.HB"), 
+        cols =rainbow(col.num), 
+        pt.size = 0.01, #不需要显示点，可以设置pt.size = 0
+        ncol = 4) + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) 
+
+minGene=200
+maxGene=5000
+pctMT=10
+
+scRNA <- subset(scRNA, subset = nFeature_RNA > minGene & nFeature_RNA < maxGene & percent.mt < pctMT)
+col.num <- length(levels(scRNA@active.ident))
+VlnPlot(scRNA,
+        features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.HB"), 
+        cols =rainbow(col.num), 
+        pt.size = 0.1, 
+        ncol = 4) + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) 
+
+scRNA <- NormalizeData(scRNA, normalization.method = "LogNormalize", scale.factor = 10000)
+
+library(tidyverse)
+library(patchwork)
+scRNA<- FindVariableFeatures(scRNA, selection.method = "vst", nfeatures = 2000)
+scale.genes <-  VariableFeatures(scRNA)
+scRNA <- ScaleData(scRNA, features = scale.genes)
+scRNA<- RunPCA(scRNA, features = VariableFeatures(scRNA))
+DimPlot(scRNA, reduction = "pca", group.by = "orig.ident")
+
+BiocManager::install('harmony',force = TRUE)
+library(harmony)
+scRNA_harmony <- RunHarmony(scRNA, group.by.vars = "orig.ident")
+DimPlot(scRNA_harmony, reduction = "harmony", group.by = "orig.ident")
+
+ElbowPlot(scRNA_harmony,reduction = 'harmony')
+
+scRNA <- FindNeighbors(scRNA_harmony, dims = 1:10, reduction = "harmony")
+scRNA <- FindClusters(scRNA)
+
+scRNA <- RunTSNE(scRNA, dims = 1:10)
+
+scRNA <- RunUMAP(scRNA, dims = 1:10,reduction = 'harmony')
+DimPlot(scRNA,split.by = 'tissue_type')
+library(SingleR)
+refdata <- SingleR::HumanPrimaryCellAtlasData()
+testdata <- GetAssayData(scRNA, slot="data")
+clusters <- scRNA@meta.data$seurat_clusters
+cellpred <- SingleR(test = testdata, ref = refdata,
+                    labels =refdata$label.main,
+                    method = "cluster", clusters = clusters, 
+                    assay.type.test = "logcounts", assay.type.ref = "logcounts")
+
+celltype = data.frame(ClusterID=rownames(cellpred), celltype=cellpred$labels, stringsAsFactors = F)
+
+Idents(scRNA)=scRNA$seurat_clusters
+marker <- c('KRT19','ENO2','SLC25A2','UBE2C',#tumor
+              'EPCAM','KRT7','KRT8','KRT18','CDH1', #epithelial cell
+              'APOE',"C1QA",'C1QB','MKI67','STMN1','NUSAP1', #TAM
+              'FAP','ITGA11','FN1','TIMP1','SPP1'#CAF 
+            ) 
+DotPlot(scRNA, 
+        features = marker,
+        group.by = "seurat_clusters") + coord_flip()
+
+celltype=c('T cell',
+             'T cell',
+             'NK cell',
+             'TAM',
+             'Macrophage',
+             'Neutrophil',
+             'Malignant cell',
+             'B cell',
+             'NK cell',
+             'Malignant cell',
+             'CAF',
+             'Endothelial cell',
+             'TAM',
+             'T cell',
+             'Malignant cell',
+             'T cell',
+             'TAM',
+             'Monocyte',
+             'CAF',
+             'Malignant cell',
+             'T cell',
+             'TAM',
+             'B cell',
+             'Malignant cell',
+             'Malignant cell',
+             'Malignant cell',
+             'Epithelial cell',
+             'TAM',
+             'T cell',
+             'B cell'
+             )
+
+
+
+Idents(scRNA) <- scRNA@meta.data$seurat_clusters
+names(celltype) <- levels(scRNA)
+scRNA<- RenameIdents(scRNA, celltype)
+
+scRNA@meta.data$celltype <- Idents(scRNA)
+
+
+
+scRNA@meta.data$celltype = "NA"
+for(i in 1:nrow(celltype)){
+  scRNA@meta.data[which(scRNA@meta.data$seurat_clusters == celltype$ClusterID[i]),'celltype'] <- celltype$celltype[i]}
+
+
+Idents(scRNA)=scRNA$celltype
+
+library(RColorBrewer)
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals))) 
+
+DimPlot(scRNA,cols = col_vector[20:30])
+saveRDS(scRNA,file = 'scRNA_anno.RDS')
