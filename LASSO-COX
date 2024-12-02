@@ -1,0 +1,397 @@
+setwd('/Users/smrsp/lung cancer/DATA')
+
+scRNA=readRDS('/Users/smrsp/lung cancer/DATA/scRNA_geneset.RDS')
+scRNAsub=subset(scRNA,celltype=='Malignant cell')
+Idents(scRNAsub)=scRNAsub$geneset_group ## geneset_group！
+
+library(Seurat)
+df=FindMarkers(scRNAsub,ident.1 = 'COVIDhighMali',only.pos = T,logfc.threshold = 0.5)
+save(df,file ='marker_geneset.Rdata')
+load('marker_geneset.Rdata')
+gene=rownames(df)
+
+load('/Users/smrsp/lung cancer/DATA/LUAD_tpm.Rdata')
+
+metadata=data.frame(id= colnames(exprSet),group_list)
+metadata_tumor= metadata[metadata$group_list=='tumor',]
+exprSet=exprSet[,metadata_tumor$id]
+exprSet1=log2(exprSet+1)
+max(exprSet1)
+
+suv=read.table('TCGA-LUAD.survival.tsv',row.names = 1,header = T,check.names = F)
+surv1=dplyr::select(suv,'OS.time','OS')
+colnames(surv1)=c("futime", "fustat")
+
+sameSample=intersect(colnames(exprSet1),row.names(surv1))
+
+
+exprSet1=exprSet1[,sameSample]
+surv1=surv1[sameSample,]
+all_samples <- colnames(exprSet1)
+total_samples <- length(all_samples)
+train_sample_size <- floor(0.7 * total_samples)
+
+set.seed(123) 
+train_samples <- sample(all_samples, train_sample_size)
+
+valid_samples <- setdiff(all_samples, train_samples)
+
+exprSet_train <- exprSet1[, train_samples]
+exprSet_valid <- exprSet1[, valid_samples]
+
+surv_train <- surv1[train_samples, ]
+surv_valid <- surv1[valid_samples, ]
+
+dim(exprSet_train)  
+dim(exprSet_valid)  
+
+train=exprSet_train
+surv1=surv_train
+
+test=exprSet_valid
+surv2=surv_valid
+
+load('marker_geneset.Rdata')
+gene=rownames(df)
+
+data=train[rownames(train) %in% gene,]
+data=as.data.frame(t(data))
+
+
+rt=cbind(surv1,data)
+rt$futime=rt$futime/365
+
+library(survminer)
+library(survival)
+library(dplyr)
+library(caret)
+
+pFilter=0.05                                    
+outTab=data.frame()
+sigGenes=c("futime","fustat")
+
+for(i in colnames(rt[,3:ncol(rt)])){
+  cox <- coxph(Surv(futime, fustat) ~ rt[,i], data = rt)
+  coxSummary = summary(cox)
+  coxP=coxSummary$coefficients[,"Pr(>|z|)"]
+  if (!is.na(coxP) && coxP < pFilter) {
+    sigGenes = c(sigGenes, i)
+    outTab = rbind(outTab,
+                   cbind(id = i,
+                         HR = coxSummary$conf.int[,"exp(coef)"],
+                         HR.95L = coxSummary$conf.int[,"lower .95"],
+                         HR.95H = coxSummary$conf.int[,"upper .95"],
+                         pvalue = coxSummary$coefficients[,"Pr(>|z|)"])
+    )
+  }
+  
+
+write.table(outTab,file="uniCoxset_internal_tcga.txt",sep="\t",row.names=F,quote=F)
+
+
+uniSigExp=rt[,sigGenes]
+uniSigExp=cbind(id=row.names(uniSigExp),uniSigExp)
+write.table(uniSigExp,file="uniSigExp_internal_geneset.txt",sep="\t",row.names=F,quote=F)
+
+library(ggplot2)
+library(scales)
+library(ggstatsplot)
+library(viridis)
+library(tibble)
+library(forestplot)
+data <- read.table("uniCox_tcga.txt",header = T)
+head(data)
+colnames(data)[1]='gene'
+data1 <- data %>% dplyr::filter(HR > 1)
+data2 <- data %>% dplyr::filter(HR < 1)
+
+hrtable <- rbind(
+  c("Increase in Hazard", NA, NA, NA, NA, NA),
+  data1,
+  c("Reduce in Hazard", NA, NA, NA, NA, NA),
+  data2
+)
+
+tabletext <- cbind(
+  c("Gene", "Increase in Hazard", data1$gene, "Reduce in Hazard", data2$gene),
+  c("P-value", NA, data1$pvalue, NA, data2$pvalue),
+  c("Hazard Ratio", NA, data1$`HR`, NA, data2$`HR`)
+)
+which(tabletext[, 1] == "Reduction in Hazard")
+nrow(tabletext) + 1
+
+quantile(data$HR.95L)
+quantile(data$HR.95H)
+dev.off()
+forestplot(
+  labeltext = tabletext, 
+  mean = c(NA, as.numeric(hrtable$HR)), # HR
+  lower = c(NA, as.numeric(hrtable$HR.95L)), 
+  upper = c(NA, as.numeric(hrtable$HR.95H)), 
+  graph.pos = 4, 
+  graphwidth = unit(.4, "npc"), 
+  fn.ci_norm = "fpDrawDiamondCI", 
+  col = fpColors(box = "#CD534CFF", lines = "#0073C2FF", zero = "#0073C2FF"), 
+  boxsize = 0.7,
+  lwd.ci = 3, ci.vertices.height = 0.125,
+  ci.vertices = T, 
+  zero = 1, 
+  lwd.zero = 2,
+  xticks = seq(0, 4, 1), 
+  lwd.xaxis = 2, 
+  xlab = "Hazard Ratio",
+  hrzl_lines = list(
+    "1" = gpar(lwd = 2, col = "black"),
+    "3" = gpar(lwd = 1, col = "grey50", lty = 2), 
+    "29" = gpar(lwd = 1, col = "grey50", lty = 2), 
+    "1" = gpar(lwd = 2, col = "black")
+  ),nrow(tabletext) + 1
+  lineheight = unit(0.8, "cm"), 
+  txt_gp = fpTxtGp(
+    label = gpar(cex = 1),
+    ticks = gpar(cex = 1.25),
+    xlab = gpar(cex = 1.85),
+    title = gpar(cex = 1.5)
+  ),
+  clip = c(0, 2),
+  colgap = unit(0.15, "cm"), 
+  mar = unit(rep(1.25, times = 4), "cm"), 
+  new_page = F 
+)
+
+
+# lasso_cox-------
+rt=read.table('uniSigExp_internal_geneset.txt',row.names = 1,header = T)
+set.seed(2)  
+
+x=as.matrix(rt[,c(3:ncol(rt))]) 
+y=data.matrix(Surv(rt$futime,rt$fustat)) 
+library(glmnet)
+fit=glmnet(x, y, family = "cox", alpha = 1) 
+#?glmnet
+plot(fit, xvar = "lambda", label = F)
+#?cv.glmnet
+cvfit = cv.glmnet(x, y, family="cox",nfolds = 10,alpha=1) 
+plot(cvfit) 
+
+coef =coef(fit,s = cvfit$lambda.min)
+index = which(coef !=0)
+actCoef = coef[index] 
+lassoGene = row.names(coef)[index] 
+geneCoef = cbind(Gene=lassoGene,Coef=actCoef) 
+geneCoef   
+write.table(geneCoef,file = 'lasso_internal_geneset_output_final.txt',quote = F,sep = '\t',row.names = F)
+
+library(survival)                                       
+
+cols_to_select <- c(geneCoef[, 1], "fustat", "futime")
+rt=read.table("uniSigExp_internal_geneset.txt",header=T,sep="\t",check.names=F,row.names=1)    
+
+rt1=rt[c(cols_to_select,'fustat','futime')]
+cols_to_remove <- c("fustat.1", "futime.1")
+rt1 = rt1[, setdiff(colnames(rt1), cols_to_remove)]
+
+library(survival)
+library(survminer)
+library(rms)
+multiCox=coxph(Surv(futime, fustat) ~ ., data = rt1)
+
+multiCox=step(multiCox,direction = 'both')
+multiCoxSum=summary(multiCox)
+
+p=ggforest(multiCox,data = rt1,main ="Hazard ratio",
+           cpositions = c(0.01,0.22,0.4),
+           fontsize = 0.6,
+           refLabel = "1", noDigits = 3)
+p
+
+outTab=data.frame()
+outTab=cbind(
+  coef=multiCoxSum$coefficients[,"coef"],
+  HR=multiCoxSum$conf.int[,"exp(coef)"],
+  HR.95L=multiCoxSum$conf.int[,"lower .95"],
+  HR.95H=multiCoxSum$conf.int[,"upper .95"],
+  pvalue=multiCoxSum$coefficients[,"Pr(>|z|)"])
+outTab=cbind(id=row.names(outTab),outTab)
+outTab=gsub("`","",outTab)
+
+
+library(forestmodel)
+forest_model(multiCox)
+
+riskScore=predict(multiCox,type="risk",newdata=rt1)
+write.csv(riskScore,file ='risk_internal_train_cox.csv',quote = F,row.names = F)
+riskScore=read_csv("risk_internal_train_cox.csv")
+
+data2=test[lassoGene,]
+data2=as.data.frame(t(data2))
+rt2=cbind(data2,surv2)
+riskScore2=predict(multiCox,type = 'risk',newdata=rt2)
+
+write.csv(riskScore2,file ='risk_internal_test_cox.csv',quote = F,row.names = F)
+
+risk=read.csv('./risk_internal_train_cox.csv')
+risk=risk$x
+rt=read.table("uniSigExp_internal_geneset.txt",header=T,sep="\t",check.names=F,row.names=1)   
+rt1=rt[,c(geneCoef[,1],'fustat','futime')]
+rt1$risk=risk
+rt1$group=ifelse(rt1$risk>median(rt1$risk),'High','Low')
+rt1$group=factor(rt1$group)
+rt1$group=relevel(rt1$group,ref = 'Low')
+fit <- survfit(Surv(futime, fustat) ~ group, data = rt1)
+
+ggsurvplot(fit, 
+           data=rt1,
+           pval = T,
+           conf.int=T,
+           pval.size=4,
+           risk.table=F,
+           legend=c(0.88,0.88),
+           legend.labs=c("Low", "High"),
+           legend.title= "risk" ,
+           xlab="Years",
+           risk.table.title="",
+           surv.median.line = 'hv',
+           palette = c('#0072B5','#BC3C29'),
+           risk.table.height=.25,
+           font.title=12,
+)
+
+library(timeROC)
+timeROC <- with(rt1, 
+                timeROC(T = futime,
+                        delta =fustat,
+                        marker = risk, 
+                        cause = 1, 
+                        times = c(1,3,5), 
+                        ROC = TRUE,
+                        iid = TRUE, 
+                        weighting = "marginal")) 
+print(timeROC)
+
+df <- data.frame(FPR = as.numeric(timeROC$FP),
+                 TPR = as.numeric(timeROC$TP),
+                 time = rep(as.factor(c(1,3,5)), each = nrow(timeROC$TP)))
+head(df)
+
+mytheme <- theme(axis.title = element_text(size = 13),
+                 axis.text = element_text(size = 11),
+                 plot.title = element_text(size = 14,
+                                           hjust = 0.5,
+                                           face = "bold"),
+                 legend.title = element_text(size = 13),
+                 legend.text = element_text(size = 11),
+                 legend.background = element_rect(linetype = 1, size = 0.25, colour = "black"),
+                 legend.position = c(1, 0),
+                 legend.justification = c(1, 0))
+
+p <- ggplot() +
+  geom_line(data = df,aes(x = FPR, y = TPR, color = time), size = 1) +
+  geom_line(aes(x = c(0,1),y = c(0,1)),color = "grey") +
+  scale_color_manual(name = NULL, values = c("#8AD879","#FA9F42", "#F3533A"),
+                     labels = c("1 Years(AUC = 0.716)" ,"2 Years(AUC = 0.716)", "5 Years(AUC = 0.703)"))+
+  theme_bw() +
+  mytheme +
+  labs(x = "1 - Specificity (FPR)",
+       y = "Sensitivity (TPR)")
+p
+
+
+
+risk=read.csv('./risk_internal_test_cox.csv')
+data2=test[lassoGene,]
+data2=as.data.frame(t(data2))
+
+rt2=cbind(data2,surv2)
+rt2$risk=risk$x
+rt2$group=ifelse(rt2$risk>median(rt2$risk),'High','Low')
+rt2$group=factor(rt2$group)
+rt2$group=relevel(rt2$group,ref = 'Low')
+fit <- survfit(Surv(futime, fustat) ~ group, data = rt2)
+
+ggsurvplot(fit, 
+           data=rt2,
+           pval = T,
+           conf.int=T,
+           pval.size=4,
+           risk.table=F,
+           legend=c(0.88,0.88),
+           legend.labs=c("Low", "High"),
+           legend.title= "risk" ,
+           xlab="Years",
+           risk.table.title="",
+           surv.median.line = 'hv',
+           palette = c('#0072B5','#BC3C29'),
+           risk.table.height=.25,
+           font.title=12,
+)
+
+
+library(timeROC)
+rt2$futime=rt2$futime/365
+timeROC <- with(rt2, 
+                timeROC(T = futime,
+                        delta =fustat,
+                        marker = risk, 
+                        cause = 1, 
+                        times = c(1,3,5), 
+                        ROC = TRUE, 
+                        iid = TRUE, 
+                        weighting = "marginal")) 
+print(timeROC)
+
+df <- data.frame(FPR = as.numeric(timeROC$FP),
+                 TPR = as.numeric(timeROC$TP),
+                 time = rep(as.factor(c(1,3,5)), each = nrow(timeROC$TP)))
+head(df)
+
+mytheme <- theme(axis.title = element_text(size = 13),
+                 axis.text = element_text(size = 11),
+                 plot.title = element_text(size = 14,
+                                           hjust = 0.5,
+                                           face = "bold"),
+                 legend.title = element_text(size = 13),
+                 legend.text = element_text(size = 11),
+                 legend.background = element_rect(linetype = 1, size = 0.25, colour = "black"),
+                 legend.position = c(1, 0),
+                 legend.justification = c(1, 0))
+
+p <- ggplot() +
+  geom_line(data = df,aes(x = FPR, y = TPR, color = time), size = 1) +
+  geom_line(aes(x = c(0,1),y = c(0,1)),color = "grey") +
+  scale_color_manual(name = NULL, values = c("#8AD879","#FA9F42", "#F3533A"),
+                     labels = c("1 Years(AUC = 0.716)" ,"3 Years(AUC = 0.716)", "5 Years(AUC = 0.703)"))+
+  theme_bw() +
+  mytheme +
+  labs(x = "1 - Specificity (FPR)",
+       y = "Sensitivity (TPR)")
+p
+
+install.packages("iml")
+install.packages("glmnet")
+install.packages("data.table") 
+install.packages("shapviz")
+library(shapviz)
+library(ggplot2)
+library(glmnet)
+
+library(iml)
+x <- as.data.frame(x) 
+predictor <- Predictor$new(multiCox, data = x, y = y)
+shap_values <- Shapley$new(predictor, x.interest = x[1, ])
+shap_data <- shap_values$results
+shap_data$feature.value <- as.numeric(sub(".*=", "", shap_data$feature.value))
+
+feature=shap_data$feature
+id=c("UTS2", "PLEK2","ATP8A2","NEFL","SEC61G","RHOV","NPB","PARVB","ZNF581","EIF2S3","CDKN2A","EAF2")
+filtered_data <- shap_data %>%
+  filter(feature %in% id)
+
+ggplot(filtered_data, aes(x = filtered_data$feature.value, y = filtered_data$feature, color = filtered_data$feature.value)) +
+  geom_point(aes(size = abs(filtered_data$feature.value)), alpha = 0.6) + 
+  scale_color_gradient2(low = "blue", mid = "grey", high = "red", midpoint = 0.5) + 
+  labs(x = "mean(|SHAP Value|)", y = "Features") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  guides(color = guide_colorbar(title = "Feature Value"), size = guide_legend(title = "Abs Feature Value"))
+
