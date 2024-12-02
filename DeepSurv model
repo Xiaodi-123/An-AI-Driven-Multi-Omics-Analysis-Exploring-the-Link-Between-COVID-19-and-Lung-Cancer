@@ -1,0 +1,82 @@
+import deepsurv
+
+import sys
+sys.path.append('/Users/smrsp/DeepSurv/deepsurv')
+import deepsurv
+from deepsurv import deep_surv
+from deepsurv_logger import DeepSurvLogger, TensorboardLogger
+import utils
+import viz
+import numpy as np
+import pandas as pd
+import lasagne
+import matplotlib
+import matplotlib.pyplot as plt
+import theano
+
+train_dataset_fp = '/Users/smrsp/lung cancer/DATA/train_gene_data_RPS2.csv'
+train_df = pd.read_csv(train_dataset_fp)
+train_df.head()
+test_dataset_fp = '/Users/smrsp/lung cancer/DATA/vali_gene_data_RPS2.csv'
+test_df = pd.read_csv(test_dataset_fp)
+test_df.head()
+
+
+def dataframe_to_deepsurv_ds(df, event_col = 'Event', time_col = 'Time'):
+    e = df[event_col].values.astype(np.int32)
+    t = df[time_col].values.astype(np.float32)
+    x_df = df.drop([event_col, time_col], axis = 1)
+    x = x_df.values.astype(np.float32)
+    return {
+        'x' : x,
+        'e' : e,
+        't' : t
+    }
+
+train_data = dataframe_to_deepsurv_ds(train_df, event_col = 'Event', time_col= 'Time')
+test_data = dataframe_to_deepsurv_ds(test_df, event_col = 'Event', time_col= 'Time')
+
+
+hyperparams = {
+    'L2_reg': 25.0,
+    'batch_norm': True,
+    'dropout': 0.4,
+    'hidden_layers_sizes': [120, 120],
+    'learning_rate': 1e-13,
+    'lr_decay': 0.001,
+    'momentum': 0.9,
+    'n_in': train_data['x'].shape[1],
+    'standardize': True
+}
+
+
+model = deep_surv.DeepSurv(**hyperparams)
+
+experiment_name = 'test_experiment_sebastian'
+logdir = './logs/tensorboard/'
+logger = TensorboardLogger(experiment_name, logdir=logdir)
+
+update_fn=lasagne.updates.nesterov_momentum 
+
+n_epochs =1000
+
+metrics = model.train(train_data, n_epochs=n_epochs, logger=logger, update_fn=update_fn)
+
+import torch
+
+torch.save(model, '/Users/smrsp/lung cancer/DATA/model')
+
+deepsurv.plot_log(metrics)
+
+risk_train=model.predict_risk(train_data["x"])
+risk_train=pd.DataFrame(risk_train)
+
+risk_train.to_csv('/Users/smrsp/lung cancer/DATA/risk_train_RPS2.csv')
+
+
+risk_test=model.predict_risk(test_data["x"])
+risk_test=pd.DataFrame(risk_test)
+
+risk_test.to_csv('/Users/smrsp/lung cancer/DATA/risk_vali_RPS2.csv')
+
+train_df = pd.read_csv(train_dataset_fp)
