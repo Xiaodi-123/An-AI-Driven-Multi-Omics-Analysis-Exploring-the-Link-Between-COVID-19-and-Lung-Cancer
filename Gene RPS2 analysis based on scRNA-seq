@@ -20,10 +20,6 @@ scRNA_mali$gene_group=ifelse(as.numeric(scRNA_mali@assays$RNA@counts['RPS2',])>0
 scRNA_other=subset(scRNA,celltype != 'Malignant cell')
 scRNA_other$gene_group=scRNA_other$celltype
 scRNA_chat=merge(scRNA_mali,scRNA_other)
-saveRDS(scRNA_mali,file = './scRNA_maliP.RDS')
-saveRDS(scRNA_other,file = './scRNA_otherP.RDS')
-scRNA_mali=readRDS('./scRNA_maliP.RDS')
-scRNA_other=readRDS('./scRNA_otherP.RDS')
 set.seed(123456)
 a=sample(1:ncol(scRNA_chat),3000)
 scRNA_chat=scRNA_chat[,a]
@@ -41,7 +37,7 @@ groupSize <- as.numeric(table(cellchat@idents))
 CellChatDB.use <- subsetDB(CellChatDB, search = c("Secreted Signaling",'Cell-Cell Contact') )
 cellchat@DB <- CellChatDB.use 
 
-dplyr::glimpse(CellChatDB$interaction)##配体-受体分析
+dplyr::glimpse(CellChatDB$interaction)
 cellchat <- subsetData(cellchat)
 cellchat <- identifyOverExpressedGenes(cellchat)
 cellchat <- identifyOverExpressedInteractions(cellchat)
@@ -100,7 +96,6 @@ plot_cpdb(scdata =sce, cell_type1 = 'TAM', cell_type2 ='Mali' ,
 ) +
   small_axis(fontsize = 7) + small_grid() + small_guide() 
 
-scRNA_chat=readRDS('./scRNA_RPS2.RDS')
 scRNAsub=subset(scRNA_chat,celltype =='Malignant cell')
 
 scRNAsub <- FindVariableFeatures(scRNAsub, selection.method = "vst", nfeatures = 3000) 
@@ -128,11 +123,9 @@ DimPlot(scRNAsub, label=TRUE)
 
 BiocManager::install('Nebulosa')
 library(Nebulosa)
-FeaturePlot(scRNAsub,features = 'FGG',label = T,order = T,pt.size = 0.5,cols = magma(10))
+FeaturePlot(scRNAsub,features = 'RPS2',label = T,order = T,pt.size = 0.5,cols = magma(10))
 
-plot_density(scRNAsub,'FGG')
-saveRDS(scRNAsub,file = './scRNAsub_RPS2')
-
+plot_density(scRNAsub,'RPS2')
 
 VEC = scRNAsub@reductions$umap@cell.embeddings
 rownames(VEC) = colnames(scRNAsub)
