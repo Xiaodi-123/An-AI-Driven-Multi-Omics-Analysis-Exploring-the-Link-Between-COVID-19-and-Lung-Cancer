@@ -1,0 +1,108 @@
+setwd('/Users/smrsp/lung cancer/DATA/COVID19_bulkrna')
+library(data.table)
+rt=fread('./GSE274784.gene_matrix_anno.csv.gz',data.table = F)
+
+library(org.Mm.eg.db)
+columns(org.Mm.eg.db)
+
+gene.df <- bitr(rt$gene_id, fromType = "ENTREZID", 
+                toType = c("ENSEMBL", "GENENAME"), 
+                OrgDb = org.Mm.eg.db)
+rt$ENSEMBL <- gene.df$ENSEMBL[match(rt$gene_id, gene.df$ENTREZID)]
+rt <- na.omit(rt)
+rt$gene_id=rt$ENSEMBL
+rt <- rt[, -ncol(rt)]
+rt <- rt[!duplicated(rt$gene_id), ]
+rownames(rt) <- rt$gene_id
+rt$gene_id=NULL
+rt=count2tpm(rt,idType = 'Ensembl',org = 'mmus')
+
+rt=as.data.frame(rt)
+
+max(rt)
+rt=log2(rt+1)
+
+a1=grep('infected',colnames(rt))
+
+exp1=rt[,a1]
+exp2=rt[,-a1]
+
+rt=cbind(exp2,exp1)
+
+
+load('table1.Rdata')
+
+gene_names <- c("Rps2", "Fgg", "Plek2", "Nefl", "Sec61g", "Rhov", "Npb", "Parvb", "Cdkn2a", "Eaf2")
+
+data <- rt[rownames(rt) %in% gene_names, ]
+
+anno=data.frame(row.names =colnames(rt),group=c(rep('control',7),
+                                                rep('infected',6)))
+pheatmap::pheatmap(data,cluster_cols = F,
+                   scale = 'row',show_colnames = F,annotation_col = anno)
+#all the genes in list 'gene_names' were examined, 'Eaf2' is one of them
+df=data.frame(gene=as.numeric(rt['Eaf2',]),group=anno$group)
+ggpubr::ggboxplot(data = df, x = 'group',y='gene',color = 'group',palette = 'jco',notch = T,size = 1)+
+  stat_compare_means()
+
+
+setwd('/Users/smrsp/lung cancer/DATA/COVID19_bulkrna')
+library(data.table)
+rt=fread('./GSE249304_gene_counts_tpm.txt',data.table = F)
+
+library(org.Mm.eg.db)
+columns(org.Mm.eg.db)
+
+gene.df <- bitr(rt$V1, fromType = "ALIAS", 
+                toType = c("ENSEMBL", "GENENAME"), 
+                OrgDb = org.Mm.eg.db)
+rt$ENSEMBL <- gene.df$ENSEMBL[match(rt$V1, gene.df$ALIAS)]
+
+rt <- na.omit(rt)
+rt$V1=rt$ENSEMBL
+
+rt <- rt[, -ncol(rt)]
+rt <- rt[!duplicated(rt$V1), ]
+rownames(rt) <- rt$V1
+rt$V1=NULL
+rt=count2tpm(rt,idType = 'Ensembl',org = 'mmus')
+
+rt=as.data.frame(rt)
+
+max(rt)
+rt=log2(rt+1)
+library(DESeq2)
+database <- round(as.matrix(rt))
+condition <- factor(c(rep("normal",8),rep("Infected",8)), levels = c("normal", "Infected"))
+coldata <- data.frame(row.names = colnames(database), condition)
+dds <- DESeqDataSetFromMatrix(countData=database, colData=coldata, design=~condition)
+dds <- dds[ rowSums(counts(dds)) > 1, ]
+dds <- DESeq(dds)
+res <- results(dds)
+res <- res[order(res$padj),]
+diff_gene <- subset(res, padj < 0.05 & (log2FoldChange > 1 | log2FoldChange < -1))
+diff_gene_DESeq2 <- row.names(diff_gene)
+resdata <- merge(as.data.frame(res), as.data.frame(counts(dds, normalized=TRUE)),by="row.names",sort=FALSE)
+write.csv(resdata,file = "normal_vs_Infected.csv",row.names = F)
+
+load('table1.Rdata')
+
+gene_names <- c("Rps2", "Fgg", "Plek2", "Nefl", "Sec61g", "Rhov", "Npb", "Parvb", "Cdkn2a", "Eaf2")
+
+data <- rt[rownames(rt) %in% gene_names, ]
+
+anno=data.frame(row.names =colnames(rt),group=c(rep('control',8),
+                                                rep('infected',8)))
+pheatmap::pheatmap(data,cluster_cols = F,
+                   scale = 'row',show_colnames = F,annotation_col = anno)
+#all the genes in list 'gene_names' were examined, 'Eaf2' is one of them
+df=data.frame(gene=as.numeric(rt['Eaf2',]),group=anno$group)
+ggpubr::ggboxplot(data = df, x = 'group',y='gene',color = 'group',palette = 'jco',notch = T,size = 1)+
+  stat_compare_means()
+
+
+
+
+
+
+
