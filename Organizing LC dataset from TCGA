@@ -1,0 +1,40 @@
+setwd('/Users/smrsp/')
+
+#install.packages('data.table')
+library(data.table)
+expr= fread(file='TCGA-LUAD.htseq_fpkm.tsv.gz',header = T,sep = '\t')
+#https://xenabrowser.net/datapages/
+library(tibble)                 
+expr=column_to_rownames(expr,var = 'Ensembl_ID')
+max(expr)
+
+expr = 2^expr -1
+expr[1:4,1:4]
+max(expr)
+fpkmToTpm <- function(fpkm)
+{
+  exp(log(fpkm) - log(sum(fpkm)) + log(1e6))
+}
+exprSet <- as.data.frame(apply(expr,2,fpkmToTpm))
+max(exprSet)
+#exprSet=log2(exprSet+1)
+max(exprSet)
+
+#id
+library(stringr)
+library(tinyarray)
+exprSet = trans_exp(exprSet,mrna_only = T)
+max(exprSet)
+
+library(stringr)
+k1 = str_starts(colnames(exprSet),"TCGA")
+k2 = as.numeric(str_sub(colnames(exprSet),14,15))<10
+table(k1&k2)
+
+group_list = ifelse(k1&k2,"tumor","normal")
+group_list = factor(group_list,levels = c("normal","tumor"))
+
+
+save(exprSet,group_list,file='LUAD_tpm.Rdata')
+
+load(file='LUAD_tpm.Rdata')
